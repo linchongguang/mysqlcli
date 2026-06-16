@@ -42,22 +42,22 @@ FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME LIKE ?
 ORDER BY (DATA_LENGTH + INDEX_LENGTH) DESC, TABLE_NAME`
 
-const tableInfoSQL = `SELECT TABLE_SCHEMA AS TableSchema,
-       TABLE_NAME AS TableName,
-       ENGINE AS Engine,
-       ROW_FORMAT AS RowFormat,
-       TABLE_ROWS AS EstimatedRows,
-       ROUND(DATA_LENGTH / 1024 / 1024, 2) AS DataMB,
-       ROUND(INDEX_LENGTH / 1024 / 1024, 2) AS IndexMB,
-       ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2) AS TotalMB,
-       ROUND(DATA_FREE / 1024 / 1024, 2) AS FreeMB,
-       AUTO_INCREMENT AS AutoIncrement,
-       TABLE_COLLATION AS TableCollation,
-       CREATE_TIME AS CreateTime,
-       UPDATE_TIME AS UpdateTime,
-       TABLE_COMMENT AS TableComment
-FROM information_schema.TABLES
-WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`
+const tableInfoSQL = `SELECT t.TABLE_SCHEMA AS ` + "`TableSchema`" + `,
+       t.TABLE_NAME AS ` + "`TableName`" + `,
+       t.ENGINE AS ` + "`Engine`" + `,
+       t.ROW_FORMAT AS ` + "`RowFormat`" + `,
+       t.TABLE_ROWS AS ` + "`EstimatedRows`" + `,
+       ROUND(t.DATA_LENGTH / 1024 / 1024, 2) AS ` + "`DataMB`" + `,
+       ROUND(t.INDEX_LENGTH / 1024 / 1024, 2) AS ` + "`IndexMB`" + `,
+       ROUND((t.DATA_LENGTH + t.INDEX_LENGTH) / 1024 / 1024, 2) AS ` + "`TotalMB`" + `,
+       ROUND(t.DATA_FREE / 1024 / 1024, 2) AS ` + "`FreeMB`" + `,
+       t.AUTO_INCREMENT AS ` + "`AutoIncrement`" + `,
+       t.TABLE_COLLATION AS ` + "`TableCollation`" + `,
+       t.CREATE_TIME AS ` + "`CreateTime`" + `,
+       t.UPDATE_TIME AS ` + "`UpdateTime`" + `,
+       t.TABLE_COMMENT AS ` + "`TableComment`" + `
+FROM information_schema.TABLES AS t
+WHERE t.TABLE_SCHEMA = DATABASE() AND t.TABLE_NAME = ?`
 
 const routineListSQL = `SELECT ROUTINE_NAME AS RoutineName, ROUTINE_TYPE AS RoutineType, DATA_TYPE AS ReturnType,
        DEFINER AS Definer, SECURITY_TYPE AS SecurityType
