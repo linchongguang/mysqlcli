@@ -1,0 +1,4 @@
+/mysqlcli
+/bin/
+*.out
+.DS_Store
