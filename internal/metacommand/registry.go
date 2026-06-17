@@ -45,6 +45,9 @@ func (r *Registry) Execute(ctx context.Context, line string) (Result, error) {
 	if err != nil {
 		return Result{Handled: true}, err
 	}
+	if command.Name == "du" && len(command.Args) == 0 {
+		return r.users(ctx, command.Args)
+	}
 	if customCommand, ok := r.customCommands[command.Name]; ok {
 		return r.custom(ctx, customCommand, command.Args)
 	}
@@ -53,7 +56,13 @@ func (r *Registry) Execute(ctx context.Context, line string) (Result, error) {
 	case "q", "quit", "exit":
 		return Result{Handled: true, Quit: true}, nil
 	case "?", "h", "help":
-		r.printHelp()
+		if len(command.Args) == 0 {
+			r.printHelp()
+		} else if len(command.Args) == 1 {
+			r.printCommandHelp(command.Args[0])
+		} else {
+			return Result{Handled: true}, fmt.Errorf("用法: \\h [command]")
+		}
 		return Result{Handled: true}, nil
 	case "i", ".":
 		if len(command.Args) != 1 {
@@ -71,11 +80,8 @@ func (r *Registry) Execute(ctx context.Context, line string) (Result, error) {
 		}
 		fmt.Fprintf(r.writer, "Database changed to %s\n", command.Args[0])
 		return Result{Handled: true}, nil
-	case "d":
-		if len(command.Args) == 0 {
-			return r.runQuery(ctx, objectListSQL, "%")
-		}
-		return r.runQuery(ctx, describeObjectSQL, command.Args[0])
+	case "d", "desc", "describe":
+		return r.describe(ctx, command.Args)
 	case "dt":
 		return r.runQuery(ctx, tableListSQL, patternArg(command.Args))
 	case "dv":
@@ -89,6 +95,8 @@ func (r *Registry) Execute(ctx context.Context, line string) (Result, error) {
 			return Result{Handled: true}, fmt.Errorf("用法: \\tableinfo <table>")
 		}
 		return r.runQuery(ctx, tableInfoSQL, command.Args[0])
+	case "ddl":
+		return r.ddl(ctx, command.Args)
 	case "df":
 		return r.runQuery(ctx, routineListSQL, patternArg(command.Args))
 	case "triggers":
@@ -268,6 +276,57 @@ func (r *Registry) runQuery(ctx context.Context, statement string, args ...any) 
 	return Result{Handled: true}, r.renderer.Render(queryResult)
 }
 
+func (r *Registry) describe(ctx context.Context, args []string) (Result, error) {
+	if len(args) == 0 {
+		return r.runQuery(ctx, objectListSQL, "%")
+	}
+	if len(args) != 1 {
+		return Result{Handled: true}, fmt.Errorf("用法: \\d [table|pattern]")
+	}
+	tableName := args[0]
+	tableInfo, err := query.Execute(ctx, r.client.DB(), tableInfoSQL, tableName)
+	if err != nil {
+		return Result{Handled: true}, err
+	}
+	if len(tableInfo.Rows) == 0 {
+		return r.runQuery(ctx, objectListSQL, patternArg(args))
+	}
+	if err := r.renderSection("Table", tableInfo); err != nil {
+		return Result{Handled: true}, err
+	}
+	columns, err := query.Execute(ctx, r.client.DB(), describeObjectSQL, tableName)
+	if err != nil {
+		return Result{Handled: true}, err
+	}
+	if err := r.renderSection("Columns", columns); err != nil {
+		return Result{Handled: true}, err
+	}
+	indexes, err := query.Execute(ctx, r.client.DB(), indexListSQL, tableName)
+	if err != nil {
+		return Result{Handled: true}, err
+	}
+	if err := r.renderSection("Indexes", indexes); err != nil {
+		return Result{Handled: true}, err
+	}
+	foreignKeys, err := query.Execute(ctx, r.client.DB(), foreignKeySQL, tableName)
+	if err != nil {
+		return Result{Handled: true}, err
+	}
+	return Result{Handled: true}, r.renderSection("Foreign Keys", foreignKeys)
+}
+
+func (r *Registry) renderSection(title string, result query.Result) error {
+	fmt.Fprintf(r.writer, "\n%s:\n", title)
+	return r.renderer.Render(result)
+}
+
+func (r *Registry) ddl(ctx context.Context, args []string) (Result, error) {
+	if len(args) != 1 {
+		return Result{Handled: true}, fmt.Errorf("用法: \\ddl <table>")
+	}
+	return r.runQuery(ctx, "SHOW CREATE TABLE "+quoteIdentifierPath(args[0]))
+}
+
 func (r *Registry) sessions(ctx context.Context, args []string) (Result, error) {
 	showAll := false
 	minSeconds := 0
@@ -414,21 +473,48 @@ func (r *Registry) locks(ctx context.Context, args []string) (Result, error) {
 	}
 	query8 := locks8SQL
 	query57 := locks57SQL
+	capability8SQL := lockWaits8CapabilitySQL
+	capability57SQL := lockWaits57CapabilitySQL
+	required8Tables := 2
+	required57Tables := 2
 	if mode == "all" {
 		query8 = allLocks8SQL
 		query57 = allLocks57SQL
+		capability8SQL = allLocks8CapabilitySQL
+		capability57SQL = allLocks57CapabilitySQL
+		required8Tables = 1
+		required57Tables = 1
 	} else if mode == "tree" {
 		query8 = lockTree8SQL
 		query57 = lockTree57SQL
 	}
-	result, err := query.Execute(ctx, r.client.DB(), query8)
-	if err != nil {
-		result, err = query.Execute(ctx, r.client.DB(), query57)
+
+	if r.hasMetadataTables(ctx, capability8SQL, required8Tables) {
+		result, err := query.Execute(ctx, r.client.DB(), query8)
+		if err != nil {
+			return Result{Handled: true}, fmt.Errorf("读取 MySQL 8 锁信息失败，可能缺少 performance_schema.data_locks/data_lock_waits 权限: %w", err)
+		}
+		return Result{Handled: true}, r.renderer.Render(result)
 	}
-	if err != nil {
-		return Result{Handled: true}, fmt.Errorf("读取锁等待失败，可能缺少 performance_schema/information_schema 权限: %w", err)
+
+	if r.hasMetadataTables(ctx, capability57SQL, required57Tables) {
+		result, err := query.Execute(ctx, r.client.DB(), query57)
+		if err != nil {
+			return Result{Handled: true}, fmt.Errorf("读取 MySQL 5.7 锁信息失败，可能缺少 information_schema InnoDB 锁表权限: %w", err)
+		}
+		return Result{Handled: true}, r.renderer.Render(result)
 	}
-	return Result{Handled: true}, r.renderer.Render(result)
+
+	return Result{Handled: true}, fmt.Errorf("当前服务器未提供可用锁元数据表：MySQL 8 需要 performance_schema.data_locks/data_lock_waits，MySQL 5.7 需要 information_schema.INNODB_LOCKS/INNODB_LOCK_WAITS")
+}
+
+func (r *Registry) hasMetadataTables(ctx context.Context, statement string, requiredCount int) bool {
+	result, err := query.Execute(ctx, r.client.DB(), statement)
+	if err != nil || len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
+		return false
+	}
+	count, err := strconv.Atoi(result.Rows[0][0])
+	return err == nil && count >= requiredCount
 }
 
 func (r *Registry) replication(ctx context.Context, args []string) (Result, error) {
@@ -633,7 +719,9 @@ func (r *Registry) printHelp() {
 	fmt.Fprintln(r.writer, `mysqlcli 快捷命令:
   \l [pattern]              列出数据库
   \i FILE | \. FILE          执行 SQL 文件
-  \d [object]               列出或描述对象
+  \d [object]               列出、搜索或描述对象
+  \desc TABLE | \describe TABLE  描述表
+  \ddl TABLE                查看建表 DDL
   \dt \dv \di \df          查看表、视图、索引和例程
   \size [table]            查看表空间大小
   \tableinfo TABLE          查看表元数据详情
@@ -684,6 +772,34 @@ func (r *Registry) printHelp() {
 	}
 }
 
+func (r *Registry) printCommandHelp(name string) {
+	name = strings.TrimPrefix(strings.ToLower(name), "\\")
+	help := map[string]string{
+		"d": `\d [table|pattern]
+  不带参数时列出当前库对象。
+  参数精确命中表名时展示表信息、字段、索引和外键。
+  参数未精确命中时按包含匹配搜索对象。
+  示例: \d orders`,
+		"desc":     `\desc TABLE：\d TABLE 的别名。示例: \desc orders`,
+		"describe": `\describe TABLE：\d TABLE 的别名。示例: \describe orders`,
+		"ddl":      `\ddl TABLE：显示 SHOW CREATE TABLE 输出。示例: \ddl orders`,
+		"locks": `\locks [--all|--tree]
+  查看当前锁等待、全部 InnoDB 锁或阻塞树。
+  MySQL 8 使用 performance_schema.data_locks/data_lock_waits。
+  MySQL 5.7 使用 information_schema.INNODB_LOCKS/INNODB_LOCK_WAITS。`,
+		"du":        `\du [pattern]：查看用户列表。注意: \du 无参数始终保留内置用户列表入口。`,
+		"variables": `\variables [--global|--session] [pattern]：查看服务器变量。示例: \variables innodb`,
+		"slowlog":   `\slowlog [N]：查看慢日志配置；带 N 时查看 mysql.slow_log 最近 N 条。`,
+		"tableinfo": `\tableinfo TABLE：查看表引擎、行格式、空间、自增、排序规则、注释等元数据。`,
+		"tablesize": `\tablesize [pattern]：按数据和索引空间占用排序查看表。`,
+	}
+	if text, ok := help[name]; ok {
+		fmt.Fprintln(r.writer, text)
+		return
+	}
+	fmt.Fprintf(r.writer, "未找到 \\%s 的单命令帮助，使用 \\? 查看完整命令列表。\n", name)
+}
+
 func patternArg(args []string) string {
 	if len(args) == 0 || args[0] == "" {
 		return "%"
@@ -704,6 +820,14 @@ func parseAccount(value string) (string, string, error) {
 
 func quoteString(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
+}
+
+func quoteIdentifierPath(value string) string {
+	parts := strings.Split(value, ".")
+	for index, part := range parts {
+		parts[index] = "`" + strings.ReplaceAll(part, "`", "``") + "`"
+	}
+	return strings.Join(parts, ".")
 }
 
 func toggleValue(args []string, current bool) (bool, error) {

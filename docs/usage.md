@@ -229,7 +229,11 @@ SELECT * FROM mysql.user LIMIT 1\G
 | `\connect <db>` | 切换数据库 |
 | `\use <db>` | `\connect` 的别名 |
 | `\d` | 列出当前库表和视图 |
-| `\d <table>` | 查看表字段 |
+| `\d <table>` | 查看表信息、字段、索引和外键 |
+| `\d <pattern>` | 未精确命中表名时按模式搜索对象 |
+| `\desc <table>` | `\d <table>` 的别名 |
+| `\describe <table>` | `\d <table>` 的别名 |
+| `\ddl <table>` | 查看 `SHOW CREATE TABLE` 输出 |
 | `\dt [pattern]` | 查看表 |
 | `\dv [pattern]` | 查看视图 |
 | `\di [table]` | 查看索引 |
@@ -247,6 +251,8 @@ SELECT * FROM mysql.user LIMIT 1\G
 \connect app_db
 \dt
 \d orders
+\desc orders
+\ddl orders
 \di orders
 \size orders
 \tablesize log
@@ -428,6 +434,8 @@ sql = SELECT TABLE_NAME AS TableName, ENGINE AS Engine, ROUND((DATA_LENGTH + IND
 
 下面示例会把 `\du <table>` 改成查看指定表大小。`du` 只是示例，机制本身支持任意命令名。
 
+注意：为避免误伤 DBA 常用的用户列表入口，`\du` 无参数时始终保留内置“查看用户列表”语义；带参数时才会进入自定义 `du` 命令。
+
 ```ini
 [command.du]
 description = 查看表空间
@@ -490,5 +498,5 @@ sha256sum mysqlcli-linux-amd64
 当前 Linux x86_64 构建校验值：
 
 ```text
-6ab0909dcf90bcb0cc753071f16264376eaf879fdff7b733a38760e859956843
+6e0d39e246d6c63bf3950677da1efddc52c06eb97ff2541e74b77deda135f418
 ```

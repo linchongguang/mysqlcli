@@ -161,7 +161,11 @@ root@127.0.0.1/app>
 | `\connect <database>` | 切换当前数据库 |
 | `\use <database>` | `\connect` 的别名 |
 | `\d` | 列出当前数据库的表和视图 |
-| `\d <object>` | 描述表或视图的字段、键及属性 |
+| `\d <object>` | 描述表或视图的表信息、字段、索引、外键及属性 |
+| `\d <pattern>` | 未精确命中对象时按包含匹配搜索对象 |
+| `\desc <table>` | `\d <table>` 的别名 |
+| `\describe <table>` | `\d <table>` 的别名 |
+| `\ddl <table>` | 输出 `SHOW CREATE TABLE` 结果 |
 | `\dt [pattern]` | 列出表 |
 | `\dv [pattern]` | 列出视图 |
 | `\di [table]` | 查看索引 |
@@ -201,6 +205,7 @@ root@127.0.0.1/app>
 
 - MySQL 8.x 优先读取 `performance_schema.data_locks` 和 `data_lock_waits`。
 - MySQL 5.7 回退到 `information_schema.innodb_locks`、`innodb_lock_waits` 和 `innodb_trx`。
+- 回退前必须通过 `information_schema.TABLES` 做能力探测，避免 MySQL 8.x 中 `INNODB_LOCKS/INNODB_LOCK_WAITS` 已移除时误报旧表错误。
 - 元数据表不可用或权限不足时，显示明确原因和建议权限，不把“无权限”误报为“无锁等待”。
 
 ### 8.6 主从复制命令
@@ -288,6 +293,8 @@ sql = SELECT TABLE_NAME AS TableName, ENGINE AS Engine, ROUND((DATA_LENGTH + IND
 ```
 
 自定义 SQL 中的 `?` 按快捷命令参数顺序绑定，参数数量必须与占位符数量一致。占位符识别会忽略字符串、反引号和注释中的问号。
+
+为保护高频内置入口，`\du` 无参数始终保留为内置用户列表命令；自定义 `du` 只在带参数时覆盖内置语义。
 
 ## 9. 输出设计
 

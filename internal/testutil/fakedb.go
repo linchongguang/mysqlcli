@@ -25,6 +25,7 @@ type QueryHandler struct {
 	Args    []driver.Value
 	Columns []string
 	Rows    [][]driver.Value
+	Err     error
 }
 
 type ExecHandler struct {
@@ -99,6 +100,9 @@ func (c *fakeConnection) QueryContext(ctx context.Context, statement string, arg
 	c.options.Calls.mu.Unlock()
 	for _, handler := range c.options.QueryHandlers {
 		if handler.matches(statement, values) {
+			if handler.Err != nil {
+				return nil, handler.Err
+			}
 			return &fakeRows{columns: handler.Columns, rows: handler.Rows}, nil
 		}
 	}

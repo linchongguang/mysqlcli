@@ -42,7 +42,9 @@ go build -o mysqlcli ./cmd/mysqlcli
 | 命令 | 用途 |
 | --- | --- |
 | `\l` | 查看数据库 |
-| `\d [object]` | 列出或描述数据库对象 |
+| `\d [object]` | 列出、搜索或描述数据库对象 |
+| `\desc table`、`\describe table` | 描述表 |
+| `\ddl table` | 查看建表 DDL |
 | `\dt`、`\dv`、`\di`、`\df` | 查看表、视图、索引和例程 |
 | `\size [table]` | 查看表空间大小 |
 | `\tableinfo table` | 查看表元数据详情 |

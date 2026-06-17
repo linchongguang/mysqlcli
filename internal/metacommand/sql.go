@@ -32,6 +32,22 @@ FROM information_schema.STATISTICS
 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME LIKE ?
 ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`
 
+const foreignKeySQL = `SELECT k.CONSTRAINT_NAME AS ConstraintName,
+       k.COLUMN_NAME AS ColumnName,
+       k.REFERENCED_TABLE_SCHEMA AS ReferencedSchema,
+       k.REFERENCED_TABLE_NAME AS ReferencedTable,
+       k.REFERENCED_COLUMN_NAME AS ReferencedColumn,
+       rc.UPDATE_RULE AS UpdateRule,
+       rc.DELETE_RULE AS DeleteRule
+FROM information_schema.KEY_COLUMN_USAGE AS k
+LEFT JOIN information_schema.REFERENTIAL_CONSTRAINTS AS rc
+  ON rc.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+ AND rc.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+WHERE k.TABLE_SCHEMA = DATABASE()
+  AND k.TABLE_NAME = ?
+  AND k.REFERENCED_TABLE_NAME IS NOT NULL
+ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION`
+
 const tableSizeSQL = `SELECT TABLE_NAME AS TableName, ENGINE AS Engine,
        TABLE_ROWS AS EstimatedRows,
        ROUND(DATA_LENGTH / 1024 / 1024, 2) AS DataMB,
@@ -142,7 +158,27 @@ FROM mysql.slow_log
 ORDER BY start_time DESC
 LIMIT ?`
 
-const locks8SQL = `SELECT waiting.REQUESTING_ENGINE_TRANSACTION_ID AS WaitingTransaction,
+const lockWaits8CapabilitySQL = `SELECT COUNT(*) AS TableCount
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'performance_schema'
+  AND TABLE_NAME IN ('data_locks', 'data_lock_waits')`
+
+const allLocks8CapabilitySQL = `SELECT COUNT(*) AS TableCount
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'performance_schema'
+  AND TABLE_NAME = 'data_locks'`
+
+const lockWaits57CapabilitySQL = `SELECT COUNT(*) AS TableCount
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'information_schema'
+  AND TABLE_NAME IN ('INNODB_LOCK_WAITS', 'INNODB_TRX')`
+
+const allLocks57CapabilitySQL = `SELECT COUNT(*) AS TableCount
+FROM information_schema.TABLES
+WHERE TABLE_SCHEMA = 'information_schema'
+  AND TABLE_NAME = 'INNODB_LOCKS'`
+
+const locks8SQL = `SELECT waits.REQUESTING_ENGINE_TRANSACTION_ID AS WaitingTransaction,
        waiting.THREAD_ID AS WaitingThread, waiting.OBJECT_SCHEMA AS ObjectSchema,
        waiting.OBJECT_NAME AS ObjectName, waiting.LOCK_TYPE AS WaitingLockType,
        waiting.LOCK_MODE AS WaitingLockMode,
@@ -176,8 +212,8 @@ const allLocks57SQL = `SELECT lock_trx_id AS TransactionId, lock_mode AS LockMod
 FROM information_schema.innodb_locks
 ORDER BY lock_table, lock_trx_id`
 
-const lockTree8SQL = `SELECT CONCAT('BLOCKER ', blocking.THREAD_ID) AS BlockingNode,
-       CONCAT('  -> WAITER ', waiting.THREAD_ID) AS WaitingNode,
+const lockTree8SQL = `SELECT CONCAT('BLOCKER ', waits.BLOCKING_THREAD_ID) AS BlockingNode,
+       CONCAT('  -> WAITER ', waits.REQUESTING_THREAD_ID) AS WaitingNode,
        waiting.OBJECT_SCHEMA AS ObjectSchema, waiting.OBJECT_NAME AS ObjectName,
        blocking.LOCK_MODE AS BlockingMode, waiting.LOCK_MODE AS WaitingMode
 FROM performance_schema.data_lock_waits waits

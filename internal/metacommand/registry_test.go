@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"strings"
 	"testing"
 
@@ -48,13 +49,47 @@ func TestRegistryCustomCommandOverridesBuiltin(t *testing.T) {
 	}
 }
 
+func TestRegistryDuWithoutArgsKeepsBuiltinWhenCustomDuExists(t *testing.T) {
+	calls := &testutil.Calls{}
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     userList8SQL,
+				Args:    []driver.Value{"%"},
+				Columns: []string{"UserName", "HostName"},
+				Rows:    [][]driver.Value{{"root", "localhost"}},
+			},
+		},
+		Calls: calls,
+	})
+	defer db.Close()
+	customCommands := map[string]config.CustomCommand{
+		"du": {
+			Name: "du",
+			SQL:  "SELECT ?",
+		},
+	}
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, customCommands)
+	if _, err := registry.Execute(context.Background(), `\du`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	queries, _ := calls.Snapshot()
+	if len(queries) != 1 || queries[0].SQL != userList8SQL {
+		t.Fatalf("查询记录 = %#v", queries)
+	}
+	if !strings.Contains(destination.String(), "root") {
+		t.Fatalf("输出 = %q", destination.String())
+	}
+}
+
 func TestRegistryCustomCommandValidatesArguments(t *testing.T) {
 	db := testutil.NewDatabase(testutil.DatabaseOptions{})
 	defer db.Close()
 	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&bytes.Buffer{}, output.Options{}), &bytes.Buffer{}, map[string]config.CustomCommand{
-		"du": {Name: "du", SQL: "SELECT ?"},
+		"dx": {Name: "dx", SQL: "SELECT ?"},
 	})
-	_, err := registry.Execute(context.Background(), `\du`)
+	_, err := registry.Execute(context.Background(), `\dx`)
 	if err == nil || !strings.Contains(err.Error(), "需要 1 个参数") {
 		t.Fatalf("错误 = %v", err)
 	}
@@ -73,10 +108,83 @@ func TestRegistryHelpShowsCustomCommands(t *testing.T) {
 	}
 }
 
+func TestRegistryCommandHelp(t *testing.T) {
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{}, output.NewRenderer(&destination, output.Options{}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), `\h locks`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	if !strings.Contains(destination.String(), `\locks [--all|--tree]`) {
+		t.Fatalf("帮助输出 = %q", destination.String())
+	}
+}
+
 func TestCountPlaceholdersIgnoresQuotedQuestionMarks(t *testing.T) {
 	statement := "SELECT '?', `?`, col FROM t WHERE a = ? AND b = ? -- ?\n/* ? */"
 	if got := countPlaceholders(statement); got != 2 {
 		t.Fatalf("countPlaceholders() = %d, 期望 2", got)
+	}
+}
+
+func TestRegistryDDLQuotesIdentifier(t *testing.T) {
+	calls := &testutil.Calls{}
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		Columns: []string{"Table", "Create Table"},
+		Rows:    [][]driver.Value{{"weird`table", "CREATE TABLE `weird``table` (...)"}},
+		Calls:   calls,
+	})
+	defer db.Close()
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), "\\ddl weird`table"); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	queries, _ := calls.Snapshot()
+	if len(queries) != 1 || queries[0].SQL != "SHOW CREATE TABLE `weird``table`" {
+		t.Fatalf("查询记录 = %#v", queries)
+	}
+}
+
+func TestRegistryDescribeTableIncludesMetadataIndexesAndForeignKeys(t *testing.T) {
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     tableInfoSQL,
+				Args:    []driver.Value{"orders"},
+				Columns: []string{"TableName", "Engine", "TableComment"},
+				Rows:    [][]driver.Value{{"orders", "InnoDB", "订单表"}},
+			},
+			{
+				SQL:     describeObjectSQL,
+				Args:    []driver.Value{"orders"},
+				Columns: []string{"Field", "Type"},
+				Rows:    [][]driver.Value{{"id", "bigint"}},
+			},
+			{
+				SQL:     indexListSQL,
+				Args:    []driver.Value{"orders"},
+				Columns: []string{"IndexName", "ColumnName"},
+				Rows:    [][]driver.Value{{"PRIMARY", "id"}},
+			},
+			{
+				SQL:     foreignKeySQL,
+				Args:    []driver.Value{"orders"},
+				Columns: []string{"ConstraintName", "ReferencedTable"},
+				Rows:    [][]driver.Value{{"fk_orders_user", "users"}},
+			},
+		},
+	})
+	defer db.Close()
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), `\desc orders`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	outputText := destination.String()
+	for _, want := range []string{"Table:", "Columns:", "Indexes:", "Foreign Keys:", "订单表", "PRIMARY", "fk_orders_user"} {
+		if !strings.Contains(outputText, want) {
+			t.Fatalf("输出缺少 %q: %q", want, outputText)
+		}
 	}
 }
 
@@ -331,6 +439,102 @@ func TestRegistryLocksRejectsUnknownOption(t *testing.T) {
 	_, err := registry.Execute(context.Background(), `\locks --unknown`)
 	if err == nil || !strings.Contains(err.Error(), "未知 locks 参数") {
 		t.Fatalf("错误 = %v", err)
+	}
+}
+
+func TestRegistryLocksUsesMySQL8Metadata(t *testing.T) {
+	calls := &testutil.Calls{}
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     lockWaits8CapabilitySQL,
+				Columns: []string{"TableCount"},
+				Rows:    [][]driver.Value{{int64(2)}},
+			},
+			{
+				SQL:     locks8SQL,
+				Columns: []string{"WaitingTransaction", "BlockingTransaction"},
+				Rows:    [][]driver.Value{{"trx1", "trx2"}},
+			},
+		},
+		Calls: calls,
+	})
+	defer db.Close()
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), `\locks`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	queries, _ := calls.Snapshot()
+	if len(queries) != 2 || queries[0].SQL != lockWaits8CapabilitySQL || queries[1].SQL != locks8SQL {
+		t.Fatalf("查询记录 = %#v", queries)
+	}
+	if strings.Contains(destination.String(), "trx1") == false {
+		t.Fatalf("输出 = %q", destination.String())
+	}
+}
+
+func TestRegistryLocksDoesNotFallbackFromMySQL8PermissionError(t *testing.T) {
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     lockWaits8CapabilitySQL,
+				Columns: []string{"TableCount"},
+				Rows:    [][]driver.Value{{int64(2)}},
+			},
+			{
+				SQL: locks8SQL,
+				Err: errors.New("SELECT command denied"),
+			},
+			{
+				SQL:     locks57SQL,
+				Columns: []string{"WaitingTransaction"},
+				Rows:    [][]driver.Value{{"should-not-run"}},
+			},
+		},
+	})
+	defer db.Close()
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&bytes.Buffer{}, output.Options{}), &bytes.Buffer{}, nil)
+	_, err := registry.Execute(context.Background(), `\locks`)
+	if err == nil || !strings.Contains(err.Error(), "MySQL 8 锁信息失败") {
+		t.Fatalf("错误 = %v", err)
+	}
+}
+
+func TestRegistryLocksFallsBackToMySQL57Metadata(t *testing.T) {
+	calls := &testutil.Calls{}
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     lockWaits8CapabilitySQL,
+				Columns: []string{"TableCount"},
+				Rows:    [][]driver.Value{{int64(0)}},
+			},
+			{
+				SQL:     lockWaits57CapabilitySQL,
+				Columns: []string{"TableCount"},
+				Rows:    [][]driver.Value{{int64(2)}},
+			},
+			{
+				SQL:     locks57SQL,
+				Columns: []string{"WaitingTransaction", "BlockingTransaction"},
+				Rows:    [][]driver.Value{{"trx57a", "trx57b"}},
+			},
+		},
+		Calls: calls,
+	})
+	defer db.Close()
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), `\locks`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	queries, _ := calls.Snapshot()
+	if len(queries) != 3 || queries[0].SQL != lockWaits8CapabilitySQL || queries[1].SQL != lockWaits57CapabilitySQL || queries[2].SQL != locks57SQL {
+		t.Fatalf("查询记录 = %#v", queries)
+	}
+	if !strings.Contains(destination.String(), "trx57a") {
+		t.Fatalf("输出 = %q", destination.String())
 	}
 }
 
