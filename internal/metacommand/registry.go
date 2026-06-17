@@ -80,8 +80,10 @@ func (r *Registry) Execute(ctx context.Context, line string) (Result, error) {
 		}
 		fmt.Fprintf(r.writer, "Database changed to %s\n", command.Args[0])
 		return Result{Handled: true}, nil
-	case "d", "desc", "describe":
-		return r.describe(ctx, command.Args)
+	case "d":
+		return r.describe(ctx, command.Args, false)
+	case "desc", "describe":
+		return r.describe(ctx, command.Args, true)
 	case "dt":
 		return r.runQuery(ctx, tableListSQL, patternArg(command.Args))
 	case "dv":
@@ -276,8 +278,11 @@ func (r *Registry) runQuery(ctx context.Context, statement string, args ...any) 
 	return Result{Handled: true}, r.renderer.Render(queryResult)
 }
 
-func (r *Registry) describe(ctx context.Context, args []string) (Result, error) {
+func (r *Registry) describe(ctx context.Context, args []string, strict bool) (Result, error) {
 	if len(args) == 0 {
+		if strict {
+			return Result{Handled: true}, fmt.Errorf("用法: \\desc <table>")
+		}
 		return r.runQuery(ctx, objectListSQL, "%")
 	}
 	if len(args) != 1 {
@@ -289,6 +294,9 @@ func (r *Registry) describe(ctx context.Context, args []string) (Result, error) 
 		return Result{Handled: true}, err
 	}
 	if len(tableInfo.Rows) == 0 {
+		if strict {
+			return Result{Handled: true}, fmt.Errorf("表不存在: %s", tableName)
+		}
 		return r.runQuery(ctx, objectListSQL, patternArg(args))
 	}
 	if err := r.renderSection("Table", tableInfo); err != nil {
@@ -775,23 +783,72 @@ func (r *Registry) printHelp() {
 func (r *Registry) printCommandHelp(name string) {
 	name = strings.TrimPrefix(strings.ToLower(name), "\\")
 	help := map[string]string{
+		"?":       `\?：查看完整快捷命令列表。`,
+		"h":       `\h [command]：查看完整帮助或单个快捷命令帮助。示例: \h sessions`,
+		"help":    `\help [command]：\h 的别名。`,
+		"q":       `\q：退出客户端。`,
+		"quit":    `\quit：退出客户端。`,
+		"exit":    `\exit：退出客户端。`,
+		"i":       `\i FILE：执行 SQL 文件。示例: \i /path/to/schema.sql`,
+		".":       `\. FILE：\i 的别名，执行 SQL 文件。`,
+		"l":       `\l [pattern]：列出数据库。示例: \l app`,
+		"connect": `\connect DATABASE：切换当前数据库。示例: \connect app_db`,
+		"use":     `\use DATABASE：\connect 的别名。`,
 		"d": `\d [table|pattern]
   不带参数时列出当前库对象。
   参数精确命中表名时展示表信息、字段、索引和外键。
   参数未精确命中时按包含匹配搜索对象。
   示例: \d orders`,
-		"desc":     `\desc TABLE：\d TABLE 的别名。示例: \desc orders`,
-		"describe": `\describe TABLE：\d TABLE 的别名。示例: \describe orders`,
-		"ddl":      `\ddl TABLE：显示 SHOW CREATE TABLE 输出。示例: \ddl orders`,
+		"desc":       `\desc TABLE：精确描述表；表不存在时报错。示例: \desc orders`,
+		"describe":   `\describe TABLE：\desc 的别名。示例: \describe orders`,
+		"dt":         `\dt [pattern]：列出当前库表。示例: \dt order`,
+		"dv":         `\dv [pattern]：列出当前库视图。`,
+		"di":         `\di [table]：查看索引。示例: \di orders`,
+		"df":         `\df [pattern]：查看存储过程和函数。`,
+		"triggers":   `\triggers [pattern]：查看触发器。`,
+		"events":     `\events [pattern]：查看事件。`,
+		"size":       `\size [table]：查看表空间大小。`,
+		"table-size": `\table-size [pattern]：\tablesize 的别名。`,
+		"ddl":        `\ddl TABLE：显示 SHOW CREATE TABLE 输出。示例: \ddl orders`,
+		"sessions": `\sessions [--all] [--min-seconds N] [--user USER]
+  查看活跃会话，默认隐藏 Sleep 和当前连接。
+  示例: \sessions --all --min-seconds 5`,
+		"ps": `\ps：\sessions 的别名。`,
 		"locks": `\locks [--all|--tree]
   查看当前锁等待、全部 InnoDB 锁或阻塞树。
   MySQL 8 使用 performance_schema.data_locks/data_lock_waits。
   MySQL 5.7 使用 information_schema.INNODB_LOCKS/INNODB_LOCK_WAITS。`,
-		"du":        `\du [pattern]：查看用户列表。注意: \du 无参数始终保留内置用户列表入口。`,
-		"variables": `\variables [--global|--session] [pattern]：查看服务器变量。示例: \variables innodb`,
-		"slowlog":   `\slowlog [N]：查看慢日志配置；带 N 时查看 mysql.slow_log 最近 N 条。`,
-		"tableinfo": `\tableinfo TABLE：查看表引擎、行格式、空间、自增、排序规则、注释等元数据。`,
-		"tablesize": `\tablesize [pattern]：按数据和索引空间占用排序查看表。`,
+		"repl": `\repl [status|channels|errors|source]
+  查看复制状态、复制通道、复制错误或源库 binlog 状态。`,
+		"variables":  `\variables [--global|--session] [pattern]：查看服务器变量。示例: \variables innodb`,
+		"vars":       `\vars：\variables 的别名。`,
+		"warnings":   `\warnings：查看最近 SQL 告警，等价于 SHOW WARNINGS。`,
+		"w":          `\W：切换每条 SQL 后自动显示 warnings。`,
+		"charset":    `\charset：查看常用字符集和排序规则变量。`,
+		"binlog":     `\binlog：查看二进制日志文件和大小。`,
+		"slowlog":    `\slowlog [N]：查看慢日志配置；带 N 时查看 mysql.slow_log 最近 N 条。`,
+		"innodb":     `\innodb：从 SHOW ENGINE INNODB STATUS 提取摘要。`,
+		"deadlocks":  `\deadlocks：提取最近一次 InnoDB 死锁信息。`,
+		"du":         `\du [pattern]：查看用户列表。注意: \du 无参数始终保留内置用户列表入口。`,
+		"user":       `\user USER@HOST：查看单个用户详情。示例: \user app@%`,
+		"grants":     `\grants [USER@HOST]：查看授权；省略参数时查看当前用户。`,
+		"roles":      `\roles [USER@HOST]：查看当前角色或指定用户角色关系。`,
+		"whoami":     `\whoami：查看 USER()、CURRENT_USER()、当前角色和当前库。`,
+		"privileges": `\privileges：查看服务器支持的权限类型。`,
+		"kill":       `\kill [--connection] ID：终止查询或连接。默认 KILL QUERY。`,
+		"x":          `\x [on|off]：切换纵向输出。`,
+		"timing":     `\timing [on|off]：切换耗时显示。`,
+		"pager":      `\pager [command|off]：设置或关闭分页器。示例: \pager less -S`,
+		"status":     `\status：查看连接状态和轻量健康快照。`,
+		"s":          `\s：\status 的别名。`,
+		"reconnect":  `\reconnect：使用原连接参数重新连接。`,
+		"c":          `\c：清空当前输入缓冲区。`,
+		"p":          `\p：打印当前输入缓冲区。`,
+		"show":       `\show：\p 的别名，打印当前输入缓冲区。`,
+		"e":          `\e：调用 $EDITOR 编辑当前输入缓冲区。`,
+		"edit":       `\edit：\e 的别名。`,
+		"tableinfo":  `\tableinfo TABLE：查看表引擎、行格式、空间、自增、排序规则、注释等元数据。`,
+		"tablesize":  `\tablesize [pattern]：按数据和索引空间占用排序查看表。`,
 	}
 	if text, ok := help[name]; ok {
 		fmt.Fprintln(r.writer, text)

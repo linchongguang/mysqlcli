@@ -163,8 +163,8 @@ root@127.0.0.1/app>
 | `\d` | 列出当前数据库的表和视图 |
 | `\d <object>` | 描述表或视图的表信息、字段、索引、外键及属性 |
 | `\d <pattern>` | 未精确命中对象时按包含匹配搜索对象 |
-| `\desc <table>` | `\d <table>` 的别名 |
-| `\describe <table>` | `\d <table>` 的别名 |
+| `\desc <table>` | 精确描述表；表不存在时报错 |
+| `\describe <table>` | `\desc <table>` 的别名 |
 | `\ddl <table>` | 输出 `SHOW CREATE TABLE` 结果 |
 | `\dt [pattern]` | 列出表 |
 | `\dv [pattern]` | 列出视图 |

@@ -119,6 +119,17 @@ func TestRegistryCommandHelp(t *testing.T) {
 	}
 }
 
+func TestRegistryCommandHelpSessions(t *testing.T) {
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{}, output.NewRenderer(&destination, output.Options{}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), `\h sessions`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	if !strings.Contains(destination.String(), `\sessions [--all]`) || !strings.Contains(destination.String(), "--min-seconds") {
+		t.Fatalf("帮助输出 = %q", destination.String())
+	}
+}
+
 func TestCountPlaceholdersIgnoresQuotedQuestionMarks(t *testing.T) {
 	statement := "SELECT '?', `?`, col FROM t WHERE a = ? AND b = ? -- ?\n/* ? */"
 	if got := countPlaceholders(statement); got != 2 {
@@ -135,7 +146,7 @@ func TestRegistryDDLQuotesIdentifier(t *testing.T) {
 	})
 	defer db.Close()
 	var destination bytes.Buffer
-	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, nil)
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{}), &destination, nil)
 	if _, err := registry.Execute(context.Background(), "\\ddl weird`table"); err != nil {
 		t.Fatalf("Execute() 返回错误: %v", err)
 	}
@@ -176,7 +187,7 @@ func TestRegistryDescribeTableIncludesMetadataIndexesAndForeignKeys(t *testing.T
 	})
 	defer db.Close()
 	var destination bytes.Buffer
-	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{Silent: true}), &destination, nil)
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{}), &destination, nil)
 	if _, err := registry.Execute(context.Background(), `\desc orders`); err != nil {
 		t.Fatalf("Execute() 返回错误: %v", err)
 	}
@@ -213,6 +224,59 @@ func TestRegistryReconnect(t *testing.T) {
 	}
 	if !result.Handled || client.reconnectCalls != 1 || !strings.Contains(destination.String(), "Reconnected") {
 		t.Fatalf("重连结果异常: result=%+v calls=%d output=%q", result, client.reconnectCalls, destination.String())
+	}
+}
+
+func TestRegistryDescMissingTableReturnsError(t *testing.T) {
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     tableInfoSQL,
+				Args:    []driver.Value{"not_exist"},
+				Columns: []string{"TableName"},
+				Rows:    nil,
+			},
+			{
+				SQL:     objectListSQL,
+				Args:    []driver.Value{"not_exist"},
+				Columns: []string{"ObjectName"},
+				Rows:    nil,
+			},
+		},
+	})
+	defer db.Close()
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&bytes.Buffer{}, output.Options{}), &bytes.Buffer{}, nil)
+	_, err := registry.Execute(context.Background(), `\desc not_exist`)
+	if err == nil || !strings.Contains(err.Error(), "表不存在: not_exist") {
+		t.Fatalf("错误 = %v", err)
+	}
+}
+
+func TestRegistryDPatternKeepsSearchBehavior(t *testing.T) {
+	db := testutil.NewDatabase(testutil.DatabaseOptions{
+		QueryHandlers: []testutil.QueryHandler{
+			{
+				SQL:     tableInfoSQL,
+				Args:    []driver.Value{"not_exist"},
+				Columns: []string{"TableName"},
+				Rows:    nil,
+			},
+			{
+				SQL:     objectListSQL,
+				Args:    []driver.Value{"not_exist"},
+				Columns: []string{"ObjectName"},
+				Rows:    nil,
+			},
+		},
+	})
+	defer db.Close()
+	var destination bytes.Buffer
+	registry := NewRegistry(&fakeClient{db: db}, output.NewRenderer(&destination, output.Options{}), &destination, nil)
+	if _, err := registry.Execute(context.Background(), `\d not_exist`); err != nil {
+		t.Fatalf("Execute() 返回错误: %v", err)
+	}
+	if !strings.Contains(destination.String(), "ObjectName") {
+		t.Fatalf("输出 = %q", destination.String())
 	}
 }
 

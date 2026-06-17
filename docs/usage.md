@@ -203,6 +203,14 @@ SELECT * FROM mysql.user LIMIT 1\G
 
 说明：`\e` / `\edit` 会调用 `$EDITOR`，未设置时默认使用 `vim`。编辑后如果 SQL 已完整会直接执行，否则保留在缓冲区继续输入。
 
+查看单个快捷命令帮助：
+
+```text
+\h sessions
+\h locks
+\h ddl
+```
+
 退出：
 
 ```text
@@ -231,8 +239,8 @@ SELECT * FROM mysql.user LIMIT 1\G
 | `\d` | 列出当前库表和视图 |
 | `\d <table>` | 查看表信息、字段、索引和外键 |
 | `\d <pattern>` | 未精确命中表名时按模式搜索对象 |
-| `\desc <table>` | `\d <table>` 的别名 |
-| `\describe <table>` | `\d <table>` 的别名 |
+| `\desc <table>` | 精确描述表；表不存在时报错 |
+| `\describe <table>` | `\desc <table>` 的别名 |
 | `\ddl <table>` | 查看 `SHOW CREATE TABLE` 输出 |
 | `\dt [pattern]` | 查看表 |
 | `\dv [pattern]` | 查看视图 |
@@ -498,5 +506,5 @@ sha256sum mysqlcli-linux-amd64
 当前 Linux x86_64 构建校验值：
 
 ```text
-6e0d39e246d6c63bf3950677da1efddc52c06eb97ff2541e74b77deda135f418
+0d27be06cf78d459d6636d8c64b280176213ee28eab25d24d70876c37bf6b0b4
 ```
