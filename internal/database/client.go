@@ -68,8 +68,9 @@ func openDB(ctx context.Context, appConfig config.Config) (*sql.DB, string, erro
 		deregisterTLS(tlsName)
 		return nil, "", fmt.Errorf("创建 MySQL 连接: %w", err)
 	}
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(2)
+	// 命令行客户端必须保持单会话语义，确保 USE、会话变量和临时表始终作用于同一连接。
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	if err := db.PingContext(ctx); err != nil {

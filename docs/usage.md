@@ -46,6 +46,8 @@ mysqlcli -h 127.0.0.1 -P 3306 -u app -p app_db
 mysqlcli -h 127.0.0.1 -u app -p -D app_db
 ```
 
+进入交互模式后，SQL `USE testdb;` 与快捷命令 `\use testdb`、`\connect testdb` 都会切换当前数据库并同步更新提示符。
+
 Unix Socket 连接：
 
 ```shell
@@ -506,5 +508,5 @@ sha256sum mysqlcli-linux-amd64
 当前 Linux x86_64 构建校验值：
 
 ```text
-0d27be06cf78d459d6636d8c64b280176213ee28eab25d24d70876c37bf6b0b4
+ed0c24d7ad7c80e3390b9b48c035917a91b05bccdf7ad06c442a847277a3eaad
 ```

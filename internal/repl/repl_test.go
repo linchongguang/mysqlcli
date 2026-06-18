@@ -60,6 +60,48 @@ func TestREPLExecutesStatementAndQuits(t *testing.T) {
 	}
 }
 
+func TestREPLUseStatementUpdatesCurrentDatabase(t *testing.T) {
+	db := testutil.NewDatabase(testutil.DatabaseOptions{})
+	defer db.Close()
+	client := &replClient{db: db}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	repl := New(client, output.NewRenderer(&stdout, output.Options{}), strings.NewReader("USE testdb;\n\\q\n"), &stdout, &stderr, false, "", false, nil)
+
+	if err := repl.Run(context.Background()); err != nil {
+		t.Fatalf("Run() 返回错误: %v", err)
+	}
+	if client.CurrentDatabase() != "testdb" {
+		t.Fatalf("CurrentDatabase() = %q", client.CurrentDatabase())
+	}
+	if !strings.Contains(stdout.String(), "Database changed to testdb") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestParseUseStatement(t *testing.T) {
+	tests := []struct {
+		statement string
+		want      string
+		ok        bool
+	}{
+		{statement: "USE testdb", want: "testdb", ok: true},
+		{statement: "use `test-db`", want: "test-db", ok: true},
+		{statement: "USE `test``db`", want: "test`db", ok: true},
+		{statement: "USEFUL testdb", ok: false},
+		{statement: "USE", ok: false},
+		{statement: "USE `testdb` trailing", ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.statement, func(t *testing.T) {
+			got, ok := parseUseStatement(tt.statement)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("parseUseStatement(%q) = %q, %v", tt.statement, got, ok)
+			}
+		})
+	}
+}
+
 func TestREPLSourceFile(t *testing.T) {
 	sqlFile := filepath.Join(t.TempDir(), "script.sql")
 	if err := os.WriteFile(sqlFile, []byte("SELECT 1;\n"), 0600); err != nil {

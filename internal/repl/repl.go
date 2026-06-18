@@ -244,6 +244,17 @@ func (r *REPL) executeFile(ctx context.Context, interrupts <-chan os.Signal, fil
 }
 
 func (r *REPL) executeStatement(ctx context.Context, interrupts <-chan os.Signal, statement string, vertical bool) error {
+	if databaseName, ok := parseUseStatement(statement); ok {
+		executeErr := r.runCancelable(ctx, interrupts, func(queryCtx context.Context) error {
+			return r.client.UseDatabase(queryCtx, databaseName)
+		})
+		if executeErr != nil {
+			return executeErr
+		}
+		fmt.Fprintf(r.output, "Database changed to %s\n", databaseName)
+		return nil
+	}
+
 	previousVertical := r.renderer.Vertical()
 	if vertical {
 		r.renderer.SetVertical(true)
@@ -343,4 +354,51 @@ func (r *REPL) printExecutionError(err error) {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func parseUseStatement(statement string) (string, bool) {
+	statement = strings.TrimSpace(statement)
+	if len(statement) < 3 || !strings.EqualFold(statement[:3], "use") {
+		return "", false
+	}
+	if len(statement) == 3 || !isSpace(statement[3]) {
+		return "", false
+	}
+	value := strings.TrimSpace(statement[4:])
+	if value == "" {
+		return "", false
+	}
+	if value[0] != '`' {
+		if strings.ContainsAny(value, " \t\r\n") {
+			return "", false
+		}
+		return value, true
+	}
+
+	var databaseName strings.Builder
+	for index := 1; index < len(value); index++ {
+		if value[index] != '`' {
+			databaseName.WriteByte(value[index])
+			continue
+		}
+		if index+1 < len(value) && value[index+1] == '`' {
+			databaseName.WriteByte('`')
+			index++
+			continue
+		}
+		if strings.TrimSpace(value[index+1:]) != "" {
+			return "", false
+		}
+		return databaseName.String(), databaseName.Len() > 0
+	}
+	return "", false
+}
+
+func isSpace(value byte) bool {
+	switch value {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }

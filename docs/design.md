@@ -101,6 +101,7 @@ mysqlcli app < schema.sql
 
 - 指定 `--socket` 或 `--protocol=socket` 时使用 Unix Socket。
 - 指定主机或 `--protocol=tcp` 时使用 TCP。
+- 交互客户端保持单一底层数据库会话，确保 `USE`、会话变量、事务和临时表语义一致。
 - 连接成功后显示服务器版本、连接 ID、当前用户和当前数据库。
 - 连接断开时不自动重放写操作；只提供显式重连命令。
 
@@ -111,6 +112,7 @@ mysqlcli app < schema.sql
 - 支持单行和多行 SQL。
 - 识别字符串、反引号、转义符和 SQL 注释中的分号。
 - 支持 `;`、`\g` 执行和 `\G` 纵向执行。
+- SQL `USE database` 与 `\use`、`\connect` 走统一切库路径，并同步更新提示符与重连配置。
 - 支持 MySQL `DELIMITER` 语句，以便创建过程、函数和触发器。
 - 支持方向键、光标编辑和本地历史记录。
 - `Ctrl+C` 首次取消当前输入或查询，再次操作不应误退出整个客户端。
